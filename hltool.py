@@ -28,7 +28,7 @@ import json
 
 # TODO: Add support for JSON comments
 PROG_NAME = 'hltool'
-PROG_VERSION = '1.0.0'
+PROG_VERSION = '1.1.0'
 PROG_DESC = PROG_NAME + ' extracts or creates a VFS archive file used by HL5'
 PROG_HELP_EPILOG = [
     'examples:',
@@ -945,6 +945,18 @@ class HL5Tool:
             chdir_wrap(self.get_dir('.tmp'),
                        lambda: vfs_proc.assemble(self.vfs_fd))
 
+def print_version():
+    # Version information
+    print(PROG_NAME, PROG_VERSION)
+    # Copyright information
+    print('Copyright (C) 2024 kyufie')
+    print('License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.')
+    print('This is free software: you are free to change and redistribute it.')
+    print('There is NO WARRANTY, to the extent permitted by law.')
+
+    exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=PROG_DESC,
@@ -961,10 +973,15 @@ def main():
                         help='only extract raw files')
     parser.add_argument('-q', '--quiet', action='store_true',
                         help='do not log anything except warnings and errors')
+    parser.add_argument('-v', '--version', action='store_true',
+                        help='output version information and exit')
     parser.add_argument('dir', nargs='?',
                         help='path to directory where files are read from or written to (if not specified, defaults to the current working directory)')
 
     args = parser.parse_args()
+
+    if args.version:
+        print_version()
 
     if args.extract and args.create:
         die('You may not specify more than one actions (-xc)')
