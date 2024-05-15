@@ -33,9 +33,9 @@ PROG_DESC = PROG_NAME + ' extracts or creates a VFS archive file used by HL5'
 PROG_HELP_EPILOG = [
     'examples:',
     ' * Extract a VFS archive data.vfs to a directory called vfs',
-    '    %s -xf data.vfs vfs' % PROG_NAME,
+    '    python3 %s.py -xf data.vfs vfs' % PROG_NAME,
     ' * Create a VFS archive data.vfs from a directory called vfs',
-    '    %s -cf data.vfs vfs' % PROG_NAME
+    '    python3 %s.py -cf data.vfs vfs' % PROG_NAME
 ]
 
 ENCODING = 'euc-kr'

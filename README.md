@@ -18,10 +18,11 @@ Unknown fields in the raw files are simply written as integers with names such a
 
 ## Usage
 
-If you're already familiar with `tar` then hltool should be quite easy. 
+If you're already familiar with `tar` then hltool should be quite easy.
+Use `--help` for more information.
 ```
  * Extract a VFS archive data.vfs.mp3 to a directory called vfs
-    hltool -xf data.vfs.mp3 vfs
+    python3 hltool.py -xf data.vfs.mp3 vfs
  * Create a VFS archive data.vfs.mp3 from a directory called vfs
-    hltool -cf data.vfs.mp3 vfs
+    python3 hltool.py -cf data.vfs.mp3 vfs
 ```
