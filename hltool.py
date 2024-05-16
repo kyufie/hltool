@@ -1009,7 +1009,7 @@ def main():
         tool.extract(raw_only=args.raw)
 
     if n_warn:
-        print('Program finished with %d warnings' % n_warn)
+        print('Program finished with %d warning(s)' % n_warn)
 
 if __name__ == "__main__":
     main()
