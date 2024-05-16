@@ -270,15 +270,17 @@ def write_str(fd, string):
     After read_cb returns, its return value will be collected and
     eventually returned.
 
+    Use wide_spec=True if the array uses 32-bit length specifier
+
     On success, it returns a list of the return values of each call to
     read_cb.
 """
-def read_pascal_array(fd, read_cb):
+def read_pascal_array(fd, read_cb, wide_spec=False):
     ret_vals = []
-    n_elem = read_le16(fd)
+    n_elem = read_le32(fd) if wide_spec else read_le16(fd)
 
     for _ in range(n_elem):
-        datalen = read_le16(fd)
+        datalen = read_le32(fd) if wide_spec else read_le16(fd)
 
         tmp_fd = io.BytesIO(strict_read(fd, datalen))
         ret_vals.append(read_cb(tmp_fd))
@@ -671,6 +673,39 @@ class ItemProcessor(Processor):
 
         self.struct_general.write(out_fd, in_obj)
 
+class ImgProcessor(Processor):
+    def __init__(self, **kwargs):
+        target_list = ['c/img/gmenu.mgr',
+                       'c/img/icon.mgr',
+                       'c/img/menu.mgr',
+                       'c/img/shadow.mgr',
+                       'c/img/touch.mgr',
+                       'c/img/ui.mgr',
+                       'c/img/worldmap.mgr']
+        super().__init__('imgproc', 'img', target_list, **kwargs)
+
+    def disassemble(self, in_fd):
+        gbm_contents = read_pascal_array(in_fd, lambda fd: fd.read(), wide_spec=True)
+
+        # Make a new directory to contain our gbm data
+        dir_name = os.path.basename(in_fd.name)
+        mkdir(dir_name)
+
+        meta = {
+            'contents': []
+        }
+        # We should be inside self.wdir right now
+        for i, data in enumerate(gbm_contents):
+            meta['contents'].append(pjoin(dir_name, str(i)))
+
+            with open(pjoin(dir_name, str(i)), 'wb') as fd:
+                fd.write(data)
+
+        return meta
+
+    def assemble(self, in_obj, out_fd):
+        pass
+
 """
     A scene file defines various parameters regarding a scene/set.
 
@@ -847,7 +882,8 @@ class HL5Tool:
         EnemyProcessor,
         ClassProcessor,
         SkillProcessor,
-        ItemProcessor
+        ItemProcessor,
+        ImgProcessor
     ]
 
     def __init__(self, vfs_fd, base_dir, quiet=False):
@@ -897,7 +933,7 @@ class HL5Tool:
                                     self.convert_target_name(target)),
                               'w')
 
-                out_obj = proc._disassemble(in_fd)
+                out_obj = chdir_wrap(self.get_dir(proc.wdir), lambda: proc._disassemble(in_fd))
                 json.dump(out_obj, out_fd, indent=4, ensure_ascii=False)
 
                 out_fd.close()
@@ -936,7 +972,8 @@ class HL5Tool:
                     out_fd = open(pjoin(self.get_dir('.tmp'), target), 'wb')
 
                     in_obj = json.load(in_fd)
-                    proc._assemble(in_obj, out_fd)
+                    chdir_wrap(self.get_dir(proc.wdir),
+                               lambda: proc._assemble(in_obj, out_fd))
 
                     out_fd.close()
                     in_fd.close()
