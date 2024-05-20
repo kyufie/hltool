@@ -44,14 +44,14 @@ COL_GREEN = '\033[92m'
 COL_CYAN = '\033[96m'
 COL_YELLOW = '\033[93m'
 
-def cli_green(string):
-    return COL_GREEN + string + '\033[0m'
+def cli_green(*msg):
+    return COL_GREEN + ' '.join(map(str, msg)) + '\033[0m'
 
-def cli_cyan(string):
-    return COL_CYAN + string + '\033[0m'
+def cli_cyan(*msg):
+    return COL_CYAN + ' '.join(map(str, msg)) + '\033[0m'
 
-def cli_yellow(string):
-    return COL_YELLOW + string + '\033[0m'
+def cli_yellow(*msg):
+    return COL_YELLOW + ' '.join(map(str, msg)) + '\033[0m'
 
 def die(msg=None):
     if msg == None:
@@ -61,9 +61,9 @@ def die(msg=None):
     exit(1)
 
 n_warn = 0
-def warn(msg):
+def warn(*msg):
     global n_warn
-    print(cli_yellow(msg), file=sys.stderr)
+    print(cli_yellow(*msg), file=sys.stderr)
     n_warn += 1
 
 """
@@ -98,13 +98,44 @@ class Processor:
         if not self.quiet:
             print(cli_cyan('[%s]') % self.name, *msg, flush=True)
 
-    def _assemble(self, in_obj, out_fd):
-        self.log('Assemble:', out_fd.name)
-        self.assemble(in_obj, out_fd)
+    @staticmethod
+    def convert_target_name(name):
+        return os.path.basename(name) + '.json'
 
-    def _disassemble(self, in_fd):
-        self.log('Disassemble:', in_fd.name)
-        return self.disassemble(in_fd)
+    def _assemble(self):
+        mkdir(self.wdir)
+
+        for target in self.target_list:
+            self.log('Assemble:', target)
+
+            in_fd = open(pjoin(self.wdir,
+                               self.convert_target_name(target)),
+                         'r')
+            out_fd = open(pjoin('.tmp', target), 'wb')
+
+            in_obj = json.load(in_fd)
+            chdir_wrap(self.wdir,
+                       lambda: self.assemble(in_obj, out_fd))
+
+            out_fd.close()
+            in_fd.close()
+
+    def _disassemble(self):
+        mkdir(self.wdir)
+
+        target_list = self.target_list
+        for target in target_list:
+            self.log('Disassemble:', target)
+            in_fd = open(pjoin('raw', target), 'rb')
+            out_fd = open(pjoin(self.wdir,
+                                self.convert_target_name(target)),
+                          'w')
+
+            out_obj = chdir_wrap(self.wdir, lambda: self.disassemble(in_fd))
+            json.dump(out_obj, out_fd, indent=4, ensure_ascii=False)
+
+            out_fd.close()
+            in_fd.close()
 
     def assemble(self, in_obj, out_fd):
         raise NotImplementedError('Must implement assemble')
@@ -898,10 +929,6 @@ class HL5Tool:
         mkdir(path)
         return path
 
-    @staticmethod
-    def convert_target_name(name):
-        return os.path.basename(name) + '.json'
-
     def open_meta(self, mode):
         return open(pjoin(self.get_dir(), 'vfs.json'), mode)
 
@@ -925,19 +952,7 @@ class HL5Tool:
 
         for proc in self.processors:
             proc = proc(quiet=self.quiet)
-
-            target_list = proc.target_list
-            for target in target_list:
-                in_fd = open(pjoin(self.get_dir('raw'), target), 'rb')
-                out_fd = open(pjoin(self.get_dir(proc.wdir),
-                                    self.convert_target_name(target)),
-                              'w')
-
-                out_obj = chdir_wrap(self.get_dir(proc.wdir), lambda: proc._disassemble(in_fd))
-                json.dump(out_obj, out_fd, indent=4, ensure_ascii=False)
-
-                out_fd.close()
-                in_fd.close()
+            chdir_wrap(self.base_dir, proc._disassemble)
 
     def create(self):
         with self.open_meta('r') as fd:
@@ -964,19 +979,7 @@ class HL5Tool:
 
             for proc in self.processors:
                 proc = proc(quiet=self.quiet)
-
-                for target in proc.target_list:
-                    in_fd = open(pjoin(self.get_dir(proc.wdir),
-                                       self.convert_target_name(target)),
-                                 'r')
-                    out_fd = open(pjoin(self.get_dir('.tmp'), target), 'wb')
-
-                    in_obj = json.load(in_fd)
-                    chdir_wrap(self.get_dir(proc.wdir),
-                               lambda: proc._assemble(in_obj, out_fd))
-
-                    out_fd.close()
-                    in_fd.close()
+                chdir_wrap(self.base_dir, proc._assemble)
 
             vfs_proc = VFSProcessor(quiet=self.quiet)
             chdir_wrap(self.get_dir('.tmp'),
