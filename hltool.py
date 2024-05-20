@@ -360,7 +360,7 @@ def write_ext_array(fd, write_cb, lspec_size, elements):
 
     write_le8(fd, n_elem)
     lspec_pos = fd.tell()
-    write_struct(fd, lspec_fmt, *list(bytes(n_elem))) # Placeholder
+    fd.seek(n_elem, io.SEEK_CUR)
     
     len_list = []
     for e in elements:
