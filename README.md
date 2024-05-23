@@ -2,21 +2,38 @@
 
 hltool is a simple utility to unpack and repack resource files from Android game Heroes Lore 5.
 
-It currently supports unpacking and repacking resource files from the game's resource archive into a series of raw files (similar to unzipping).
-And for some resource files, it also supports "decompiling", essentially converting it into a human-readable format as json.
+It currently supports unpacking and repacking resource files from the game's resource archive into a series of raw files.
+It can also decode certain types of resource files into human-readable json files.
+These json files can then be modified and repacked to form a new resource archive.
+
+hltool is meant to be used with `data.vfs.mp3`. A file used by Heroes Lore 5 to store game assets, which is similar to zip file but without the compression.
+This file contains everything the game needs to run (except for the code), which includes sprites, texts, etc.
+
+### What it can do
+
+The list is still quite short, support for more resource type will be added gradually. Although keep in mind that it is not guaranteed that it will be complete. Here's the list of what it can do.
+- Unpack and repack `data.vfs.mp3`
+- Encode and decode:
+  - UI texts
+  - Dialogues
+  - Sprites
+  - Item informations (name, description, price, for equipments: ATK and DEF)
+
 hltool unpacks all files found in the game's resource archive to `raw` directory.
 Therefore, the `raw` directory contains the unmodified, raw files as taken from the archive.
-Certain files in the `raw` directory are "decompiled", creating a separate copy in a separate directory for each. The name of this directory depends on the file type.
-
-The decompiled files contains data structure represented in json that will be used to reconstruct the files in original format upon repack operation.
+Some files in the `raw` directory are decoded, the decoded files will reside in separate directory.
+The decoded file contains data represented in json or png (for sprites) that can be used to reconstruct the resource file in its original format.
 Any changes made to its raw copy in the `raw` directory will be ignored.
-The decompiled files can be modified by hand using text editor and repacked together with the other files to form a new archive.
 
-Currently, hltool can decompile strings such as UI texts and dialogues.
-It can also parse certain item's attributes (albeit still limited) such as price, and for equipments: ATK, and DEF.
-Unknown fields in the raw files are simply written as integers with names such as '"param" or "data" and should be left untouched.
+The resulting json files sometimes turn out to be incomplete. This is because not all of the data inside the original file is identifiable by the tool.
+These unknown data in the original file are simply written in json as integer with names such as "param" or "data" and should be left untouched.
 
 ## Usage
+
+Before using hltool, you need to have `pillow` installed.
+```
+pip3 install pillow
+```
 
 If you're already familiar with `tar` then hltool should be quite easy.
 Use `--help` for more information.
