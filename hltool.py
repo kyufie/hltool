@@ -360,7 +360,7 @@ def write_ext_array(fd, write_cb, lspec_size, elements):
 
     write_le8(fd, n_elem)
     lspec_pos = fd.tell()
-    fd.seek(n_elem, io.SEEK_CUR)
+    fd.seek(struct.calcsize(lspec_fmt), io.SEEK_CUR)
     
     len_list = []
     for e in elements:
@@ -704,39 +704,6 @@ class ItemProcessor(Processor):
 
         self.struct_general.write(out_fd, in_obj)
 
-class ImgProcessor(Processor):
-    def __init__(self, **kwargs):
-        target_list = ['c/img/gmenu.mgr',
-                       'c/img/icon.mgr',
-                       'c/img/menu.mgr',
-                       'c/img/shadow.mgr',
-                       'c/img/touch.mgr',
-                       'c/img/ui.mgr',
-                       'c/img/worldmap.mgr']
-        super().__init__('imgproc', 'img', target_list, **kwargs)
-
-    def disassemble(self, in_fd):
-        gbm_contents = read_pascal_array(in_fd, lambda fd: fd.read(), wide_spec=True)
-
-        # Make a new directory to contain our gbm data
-        dir_name = os.path.basename(in_fd.name)
-        mkdir(dir_name)
-
-        meta = {
-            'contents': []
-        }
-        # We should be inside self.wdir right now
-        for i, data in enumerate(gbm_contents):
-            meta['contents'].append(pjoin(dir_name, str(i)))
-
-            with open(pjoin(dir_name, str(i)), 'wb') as fd:
-                fd.write(data)
-
-        return meta
-
-    def assemble(self, in_obj, out_fd):
-        pass
-
 """
     A scene file defines various parameters regarding a scene/set.
 
@@ -913,8 +880,7 @@ class HL5Tool:
         EnemyProcessor,
         ClassProcessor,
         SkillProcessor,
-        ItemProcessor,
-        ImgProcessor
+        ItemProcessor
     ]
 
     def __init__(self, vfs_fd, base_dir, quiet=False):
