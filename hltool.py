@@ -25,10 +25,11 @@ import shutil
 from os.path import join as pjoin
 import struct
 import json
+from PIL import Image
 
 # TODO: Add support for JSON comments
 PROG_NAME = 'hltool'
-PROG_VERSION = '1.1.0'
+PROG_VERSION = '2.0.0'
 PROG_DESC = PROG_NAME + ' extracts or creates a VFS archive file used by HL5'
 PROG_HELP_EPILOG = [
     'examples:',
@@ -53,11 +54,11 @@ def cli_cyan(*msg):
 def cli_yellow(*msg):
     return COL_YELLOW + ' '.join(map(str, msg)) + '\033[0m'
 
-def die(msg=None):
-    if msg == None:
+def die(*msg):
+    if len(msg) == 0:
         exit(1)
 
-    print(PROG_NAME + ':', msg, file=sys.stderr)
+    print(PROG_NAME + ':', *msg, file=sys.stderr)
     exit(1)
 
 n_warn = 0
@@ -88,10 +89,11 @@ def strict_read(fd, size, ignore_error=False):
     return buffer
 
 class Processor:
-    def __init__(self, name, wdir, target_list, quiet=False):
+    def __init__(self, name, wdir, target_list, no_json=False, quiet=False):
         self.name = name
         self.wdir = wdir
         self.target_list = target_list
+        self.no_json = no_json
         self.quiet = quiet
 
     def log(self, *msg):
@@ -108,17 +110,22 @@ class Processor:
         for target in self.target_list:
             self.log('Assemble:', target)
 
-            in_fd = open(pjoin(self.wdir,
-                               self.convert_target_name(target)),
-                         'r')
+            in_obj = None
+            out_fd = None
+            if not self.no_json:
+                in_fd = open(pjoin(self.wdir,
+                                   self.convert_target_name(target)),
+                             'r')
+                in_obj = json.load(in_fd)
+
             out_fd = open(pjoin('.tmp', target), 'wb')
 
-            in_obj = json.load(in_fd)
             chdir_wrap(self.wdir,
                        lambda: self.assemble(in_obj, out_fd))
 
             out_fd.close()
-            in_fd.close()
+            if not self.no_json:
+                in_fd.close()
 
     def _disassemble(self):
         mkdir(self.wdir)
@@ -127,14 +134,16 @@ class Processor:
         for target in target_list:
             self.log('Disassemble:', target)
             in_fd = open(pjoin('raw', target), 'rb')
-            out_fd = open(pjoin(self.wdir,
-                                self.convert_target_name(target)),
-                          'w')
+            if not self.no_json:
+                out_fd = open(pjoin(self.wdir,
+                                    self.convert_target_name(target)),
+                              'w')
 
             out_obj = chdir_wrap(self.wdir, lambda: self.disassemble(in_fd))
-            json.dump(out_obj, out_fd, indent=4, ensure_ascii=False)
+            if not self.no_json:
+                json.dump(out_obj, out_fd, indent=4, ensure_ascii=False)
+                out_fd.close()
 
-            out_fd.close()
             in_fd.close()
 
     def assemble(self, in_obj, out_fd):
@@ -301,39 +310,55 @@ def write_str(fd, string):
     After read_cb returns, its return value will be collected and
     eventually returned.
 
-    Use wide_spec=True if the array uses 32-bit length specifier
+    Use wide_spec=True if the array uses 32-bit length specifier.
+    Use pass_idx=True to pass the current index to the callback
+    as a second argument.
 
     On success, it returns a list of the return values of each call to
     read_cb.
 """
-def read_pascal_array(fd, read_cb, wide_spec=False):
+def read_pascal_array(fd, read_cb, wide_spec=False, pass_idx=False):
     ret_vals = []
     n_elem = read_le32(fd) if wide_spec else read_le16(fd)
 
-    for _ in range(n_elem):
+    for i in range(n_elem):
         datalen = read_le32(fd) if wide_spec else read_le16(fd)
 
         tmp_fd = io.BytesIO(strict_read(fd, datalen))
-        ret_vals.append(read_cb(tmp_fd))
+        if pass_idx:
+            ret_vals.append(read_cb(tmp_fd, i))
+        else:
+            ret_vals.append(read_cb(tmp_fd))
         tmp_fd.close()
 
     return ret_vals
 
-def write_pascal_array(fd, write_cb, elements):
+def write_pascal_array(fd, write_cb, elements, wide_spec=False, pass_idx=False):
     total_bytes_written = 0
+
     n_elem = len(elements)
-    write_le16(fd, n_elem)
-    total_bytes_written += 2
+    if wide_spec:
+        write_le32(fd, n_elem)
+        total_bytes_written += 4
+    else:
+        write_le16(fd, n_elem)
+        total_bytes_written += 2
 
     for e in elements:
         start_pos = fd.tell()
-        write_le16(fd, 0) # Placeholder
-        total_bytes_written += 2
+        fd.seek(4 if wide_spec else 2, os.SEEK_CUR)
+        total_bytes_written += 4 if wide_spec else 2
 
-        bytes_written = write_cb(fd, e)
+        if pass_idx:
+            bytes_written = write_cb(fd, e, i)
+        else:
+            bytes_written = write_cb(fd, e)
 
         fd.seek(start_pos, os.SEEK_SET)
-        write_le16(fd, bytes_written)
+        if wide_spec:
+            write_le32(fd, bytes_written)
+        else:
+            write_le16(fd, bytes_written)
         fd.seek(bytes_written, os.SEEK_CUR)
 
         total_bytes_written += bytes_written
@@ -705,6 +730,323 @@ class ItemProcessor(Processor):
         self.struct_general.write(out_fd, in_obj)
 
 """
+    This class provides base functionality to work with gbm image
+"""
+class GbmImg:
+    GBM_HEADER = SimpleStruct({
+        # I don't know if 'color' is accurate, as there is actually another data
+        # embedded in it with purpose that's currently unbeknownst to me
+        'color': Int(8),
+        'palette_size': Int(8),
+        'width': Int(16),
+        'height': Int(16)
+    })
+
+    def __init__(self, gbm_fd=None):
+        if gbm_fd:
+            self.open(gbm_fd)
+
+    # TODO: color_bit and unk0 args should be in save
+    def from_png(self, png_fd, color_bit, unk0):
+        # Converts pillow RGBA Image data into a list of pixel values suitable
+        # for GBM encoded as 565 RGB color.
+        def to_gbm_color(pil_imgdata):
+            def pix_to_gbm(rgba):
+                r, g, b, a = rgba
+
+                if a == 0:
+                    return 0xf81f
+
+                r = round(r / (0xff/0x1f))
+                g = round(g / (0xff/0x3f))
+                b = round(b / (0xff/0x1f))
+
+                return b & 0x1f | (g & 0x3f) << 5  | (r & 0x1f) << 11
+
+            return [pix_to_gbm(p) for p in pil_imgdata]
+
+        img = Image.open(png_fd, formats=['png'])
+        imgdata = list(img.getdata())
+
+        if color_bit != 8 and color_bit != 4:
+            die('color_bit must be either 4 or 8')
+
+        self.unk0 = unk0
+        self.color_bit = color_bit
+        self.width = img.width
+        self.height = img.height
+
+        # List of pixel values. We will convert it to a list of indices each pointing
+        # to an entry in the pallete data
+        gbm_imgdata = to_gbm_color(imgdata)
+        gbm_palette_data = list(set(gbm_imgdata))
+
+        if len(gbm_palette_data) > 256:
+            die('PNG image %s has more than 256 colors, please use image that uses 256 colors or less' % png_fd)
+
+        # Palette to index conversion table
+        p_i = dict((p, i) for i, p in enumerate(gbm_palette_data))
+        self.pixel_data = [p_i[p] for p in gbm_imgdata]
+        self.palette_data = gbm_palette_data
+
+    def open(self, gbm_fd):
+        def read_4bit_pixdata(fd, width, height):
+            # These pixels are encoded in the form of a matrix of color indices.
+            # Each byte represents two pixels.
+            # If there are odd number of pixels in a row, the last
+            # byte of the row will only have a half of it occupied by a pixel.
+            # In that case, the remaining half will be zeroed out and unused
+            # during rendering.
+            #
+            # Example 5x2 image:
+            # ff ff f0
+            # ff ff f0
+            # Example 6x2 image:
+            # ff ff ff
+            # ff ff ff
+            #
+            # Which means for an image with an odd number of width, we will
+            # have exactly "height" number of unused pixels.
+            odd_row = width % 2 != 0
+            # Odd npixel can only be produced if both width and height are odd numbers.
+            # In the case of odd npixel, adding already odd height will make it even.
+            # Which means npixel will always be even no matter what.
+            npixel = width * height
+            if odd_row:
+                npixel += height
+
+            pixel_data = []
+            # Loop for each row
+            for _ in range(height):
+                row_data = list(read_struct(fd, '<%dB' % (npixel // height // 2)))
+
+                for b in row_data:
+                    high = b >> 4
+                    low = b & 0xf
+                    pixel_data.append(high)
+                    pixel_data.append(low)
+
+                # Remove the unused pixel
+                if odd_row:
+                    pixel_data.pop()
+
+            return pixel_data
+
+        header = self.GBM_HEADER.read(gbm_fd)
+        # The game uses the first 4 bits to specify color resolution
+        self.color_bit = header['color'] & 0xf
+        # Unknown variable, but we'll try to preserve its value just in case
+        self.unk0 = header['color'] >> 4
+
+        if self.color_bit != 8 and self.color_bit != 4:
+            die('Unsupported color resolution', self.color_bit)
+
+        # Read color palette
+        palette_size = header['palette_size']
+        self.palette_data = read_struct(gbm_fd, '<%dH' % palette_size)
+
+        # Read pixel data
+        self.width = header['width']
+        self.height = header['height']
+        if self.color_bit == 8:
+            self.pixel_data = read_struct(gbm_fd, '<%dB' % (self.width * self.height))
+        elif self.color_bit == 4:
+            self.pixel_data = read_4bit_pixdata(gbm_fd, self.width, self.height)
+
+    def save(self, gbm_fd):
+        bytes_written = 0
+
+        header = {
+            'color': self.unk0 << 4 | self.color_bit & 0xf,
+            'width': self.width,
+            'height': self.height,
+            'palette_size': len(self.palette_data)
+        }
+        bytes_written += self.GBM_HEADER.write(gbm_fd, header)
+        bytes_written += write_struct(gbm_fd, '<%dH' % len(self.palette_data), *self.palette_data)
+
+        if self.color_bit == 8:
+            bytes_written += write_struct(gbm_fd, '<%dB' % len(self.pixel_data), *self.pixel_data)
+        elif self.color_bit == 4:
+            odd_row = self.width % 2 != 0
+            npixel = len(self.pixel_data)
+
+            if not odd_row:
+                pixel_data = []
+                for i in range(npixel // 2):
+                    high, low = self.pixel_data[i*2 : (i+1)*2]
+                    pixel_data.append((high & 0xf) << 4 | (low & 0xf))
+
+                bytes_written += write_struct(gbm_fd, '<%dB' % (npixel // 2), *pixel_data)
+                return bytes_written
+
+            # Odd row
+            for i in range(self.height):
+                row_data = self.pixel_data[i*self.width : (i+1)*self.width]
+                # Add a dummy pixel to make it even
+                row_data.append(0)
+
+                pixel_data = []
+                for j in range(len(row_data) // 2):
+                    high, low = row_data[j*2 : (j+1)*2]
+                    pixel_data.append((high & 0xf) << 4 | (low & 0xf))
+
+                bytes_written += write_struct(gbm_fd, '<%dB' % (len(row_data) // 2), *pixel_data)
+        else:
+            assert(False)
+        
+        return bytes_written
+
+    def to_png(self, out_fd):
+        # Given palette data and pixel data, return a pillow-compatible
+        # RGBA Image data.
+        def pix_to_rgba(palette_data, pixel_data):
+            # This function converts 16-bit GBM color into RGBA
+            def to_rgba(c):
+                b = c & 0x1f
+                g = c >> 5 & 0x3f
+                r = c >> 11 & 0x1f
+                a = 0 if c == 0xf81f else 255
+
+                # Since the encoded color uses less than 8-bit color space, the color will appear
+                # dark in 8-bit color space. We need to maintain their proportion over
+                # their original color space somehow.
+                r = round(r * (0xff/0x1f))
+                g = round(g * (0xff/0x3f))
+                b = round(b * (0xff/0x1f))
+                return (r, g, b, a)
+
+            rgba_palette = [to_rgba(color) for color in palette_data]
+            rgba_pixel = [rgba_palette[idx] for idx in pixel_data]
+            return rgba_pixel
+
+        def rgba_to_bytes(rgba_data):
+            flat_list = []
+            for data in rgba_data:
+                flat_list.extend(data)
+            return bytes(flat_list)
+
+        # Convert pixel data
+        imgdata = pix_to_rgba(self.palette_data, self.pixel_data)
+        img_data = rgba_to_bytes(imgdata)
+
+        # Construct new image
+        img = Image.new('RGBA', (self.width, self.height))
+        img.frombytes(img_data)
+        img.save(out_fd, format='png')
+
+class GbmProcessor(Processor):
+    def __init__(self, **kwargs):
+        target_list = ['c/map/face_%02d.gbm' % i for i in range(22)]
+        target_list += ['c/map/fgi_%03d.gbm' % i for i in range(3)]
+        target_list += ['c/map/obj_%03d.gbm' % i for i in range(255)]
+        target_list += ['c/map/tile_%03d.gbm' % i for i in range(62)]
+        super().__init__('gbmproc', 'gbm_sprites', target_list, **kwargs)
+
+    def disassemble(self, in_fd):
+        png_fd = open(os.path.basename(in_fd.name) + '.png', 'wb')
+
+        gbm_img = GbmImg(in_fd)
+        gbm_img.to_png(png_fd)
+
+        return {
+            'color_bit': gbm_img.color_bit,
+            'unk0': gbm_img.unk0
+        }
+
+    def assemble(self, in_obj, out_fd):
+        color_bit = in_obj['color_bit']
+        unk0 = in_obj['unk0']
+
+        png_fd = open(os.path.basename(out_fd.name) + '.png', 'rb')
+
+        gbm_img = GbmImg()
+        gbm_img.from_png(png_fd, color_bit, unk0)
+        gbm_img.save(out_fd)
+
+class MgrProcessor(Processor):
+    def __init__(self, **kwargs):
+        target_list = ['c/sp/img0/%03d.mgr' % i for i in range(128)]
+        target_list.pop(3)
+        target_list += ['c/sp/img1/%03d.mgr' % i for i in range(57)]
+        target_list.pop(140)
+        target_list += ['c/sp/img2/%03d.mgr' % i for i in range(49)]
+        target_list += ['c/sp/img3/%03d.mgr' % i for i in range(49)]
+        target_list += ['c/sp/img4/%03d.mgr' % i for i in range(68)]
+        target_list += ['c/sp/img5/%03d.mgr' % i for i in range(26)]
+        target_list += ['c/sp/img6/%03d.mgr' % i for i in range(17)]
+        target_list += ['c/par/pimg%02d.mgr' % i for i in range(9)]
+        target_list += ['c/img/gmenu.mgr',
+                        'c/img/icon.mgr',
+                        'c/img/menu.mgr',
+                        'c/img/shadow.mgr',
+                        'c/img/touch.mgr',
+                        'c/img/ui.mgr',
+                        'c/img/worldmap.mgr']
+        target_list += ['c/map_sp/fgi_img00.mgr',
+                        'c/map_sp/ms_img00.mgr',
+                        'c/map_sp/ms_img01.mgr',
+                        'c/map_sp/ms_img02.mgr',
+                        'c/map_sp/ms_img03.mgr',
+                        'c/map_sp/ms_img09.mgr']
+
+        # We'll handle json processing ourselves
+        super().__init__('mgrproc', 'mgr_sprites', target_list, no_json=True, **kwargs)
+
+    def disassemble(self, in_fd):
+        # We should be inside self.wdir right now
+        mgr_dirname = os.path.basename(os.path.dirname(in_fd.name))
+        mkdir(mgr_dirname)
+        mgr_basename = os.path.basename(in_fd.name)
+        mkdir(pjoin(mgr_dirname, mgr_basename))
+
+        png_list = []
+
+        def to_png(gbm_fd, idx):
+            png_path = pjoin(mgr_dirname, mgr_basename, '%d.png' % idx)
+            png_fd = open(png_path, 'wb')
+
+            gbm_img = GbmImg(gbm_fd)
+            gbm_img.to_png(png_fd)
+            
+            png_list.append({
+                'path': '%d.png' % idx,
+                'unk0': gbm_img.unk0,
+                'color_bit': gbm_img.color_bit
+            })
+
+            png_fd.close()
+
+        read_pascal_array(in_fd, to_png, wide_spec=True, pass_idx=True)
+
+        with open(pjoin(mgr_dirname, mgr_basename, 'mgr.json'), 'w') as f:
+            json.dump(png_list, f)
+
+    def assemble(self, in_obj, out_fd):
+        # We should be inside self.wdir right now
+        mgr_dirname = os.path.basename(os.path.dirname(out_fd.name))
+        mgr_basename = os.path.basename(out_fd.name)
+
+        with open(pjoin(mgr_dirname, mgr_basename, 'mgr.json'), 'r') as f:
+            png_list = json.load(f)
+
+        def from_png(fd, png_obj):
+            png_path = pjoin(mgr_dirname, mgr_basename, png_obj['path'])
+            color_bit = png_obj['color_bit']
+            unk0 = png_obj['unk0']
+
+            png_fd = open(png_path, 'rb')
+
+            gbm_img = GbmImg()
+            gbm_img.from_png(png_fd, color_bit, unk0)
+            bytes_written = gbm_img.save(fd)
+
+            png_fd.close()
+            return bytes_written
+
+        write_pascal_array(out_fd, from_png, png_list, wide_spec=True)
+
+"""
     A scene file defines various parameters regarding a scene/set.
 
     The file consists of a header, and three extended arrays.
@@ -880,7 +1222,9 @@ class HL5Tool:
         EnemyProcessor,
         ClassProcessor,
         SkillProcessor,
-        ItemProcessor
+        ItemProcessor,
+        MgrProcessor,
+        GbmProcessor
     ]
 
     def __init__(self, vfs_fd, base_dir, quiet=False):
