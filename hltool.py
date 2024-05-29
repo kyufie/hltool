@@ -603,7 +603,7 @@ class EnemyProcessor(Processor):
             'param_4dh': Int(8),
             'param_4eh': Int(8),
             'param_4fh': Int(8),
-            'param_50h': Int(32),
+            'hp': Int(32),
             'param_54h': Int(16),
             'param_56h': Int(16),
             'param_58h': Int(16),
