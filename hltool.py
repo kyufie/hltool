@@ -561,7 +561,7 @@ class EnemyProcessor(Processor):
             'level': Int(8),
             'param_2h': Int(8),
             'param_3h': Int(8),
-            'param_4h': Int(16),
+            'atk': Int(16),
             'param_6h': Int(8),
             'param_7h': Int(8),
             'param_8h': Int(16),
