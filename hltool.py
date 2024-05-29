@@ -558,7 +558,7 @@ class EnemyProcessor(Processor):
         self.struct = PascalArray({
             'name': PascalStr(),
             'param_0h': Int(8),
-            'param_1h': Int(8),
+            'level': Int(8),
             'param_2h': Int(8),
             'param_3h': Int(8),
             'param_4h': Int(16),
