@@ -29,7 +29,7 @@ from PIL import Image
 
 # TODO: Add support for JSON comments
 PROG_NAME = 'hltool'
-PROG_VERSION = '2.0.0'
+PROG_VERSION = '3.0.0'
 PROG_DESC = PROG_NAME + ' extracts or creates a VFS archive file used by HL5'
 PROG_HELP_EPILOG = [
     'examples:',
@@ -555,7 +555,8 @@ class QuestProcessor(Processor):
 
 class EnemyProcessor(Processor):
     def __init__(self, **kwargs):
-        self.struct = PascalArray({
+        # XXX: There's too many of them
+        enemy_struct = {
             'name': PascalStr(),
             'param_0h': Int(8),
             'level': Int(8),
@@ -629,8 +630,27 @@ class EnemyProcessor(Processor):
             'param_7bh': Int(8),
             'param_7ch': Int(8),
             'param_7dh': Int(16),
-            'param_7fh': Int(8),
-        })
+            'param_7fh': Int(8)
+        }
+
+        # Remove a list of items from a list
+        def remove_from_list(l, items):
+            for item in items:
+                assert(item in l)
+
+                idx = 0
+                for list_item in l:
+                    if item == list_item:
+                        l.pop(idx)
+                    idx += 1
+
+        # Relocate known fields to the top
+        key_order = list(enemy_struct.keys())
+        known_params = ['name', 'level', 'hp', 'atk']
+        remove_from_list(key_order, known_params)
+        key_order = known_params + key_order
+
+        self.struct = PascalArray(enemy_struct, key_order)
 
         target_list = ['c/csv/enemy_0.dat',
                        'c/csv/enemy_1.dat',
