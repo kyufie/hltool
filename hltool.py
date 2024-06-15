@@ -29,7 +29,7 @@ from PIL import Image
 
 # TODO: Add support for JSON comments
 PROG_NAME = 'hltool'
-PROG_VERSION = '3.0.0'
+PROG_VERSION = '0.1.0'
 PROG_DESC = PROG_NAME + ' extracts or creates a VFS archive file used by HL5'
 PROG_HELP_EPILOG = [
     'examples:',
